@@ -45,6 +45,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from hermes_constants import get_hermes_home, display_hermes_home
 from utils import atomic_replace, is_truthy_value
 from hermes_cli.config import cfg_get
+from tools.skill_runtime_contracts import blocking_skill_runtime_references
 
 logger = logging.getLogger(__name__)
 
@@ -1086,6 +1087,24 @@ def _delete_skill(name: str, absorbed_into: Optional[str] = None) -> Dict[str, A
     if unsafe:
         return {"success": False, "error": unsafe}
 
+    blocking_refs = blocking_skill_runtime_references(name)
+    if blocking_refs:
+        ref_dicts = [ref.to_dict() for ref in blocking_refs]
+        locations = "; ".join(
+            f"{ref.path}:{ref.line}" if ref.line else ref.path
+            for ref in blocking_refs[:5]
+        )
+        more = "" if len(blocking_refs) <= 5 else f" (+{len(blocking_refs) - 5} more)"
+        return {
+            "success": False,
+            "error": (
+                f"Skill '{name}' is still referenced by runtime entrypoints: "
+                f"{locations}{more}. Update those references or leave a "
+                "compatibility skill before deleting it."
+            ),
+            "runtime_references": ref_dicts,
+        }
+
     # During the curator consolidation pass, a verified consolidation must be
     # RECOVERABLE: archival into ~/.hermes/skills/.archive/ is documented as
     # the maximum destructive action the curator may take, and
@@ -1111,7 +1130,6 @@ def _delete_skill(name: str, absorbed_into: Optional[str] = None) -> Dict[str, A
         if is_consolidation:
             message += f" Content absorbed into '{absorbed_target}'."
         return {"success": True, "message": message, "_archived": True}
-
     shutil.rmtree(skill_dir)
 
     # Clean up empty category directories (don't remove the skills root itself)
